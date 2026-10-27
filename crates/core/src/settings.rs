@@ -175,9 +175,7 @@ mod tests {
     fn roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("settings.json");
-        let mut s = Settings::default();
-        s.sounds = false;
-        s.language = Some("de".into());
+        let s = Settings { sounds: false, language: Some("de".into()), ..Settings::default() };
         s.save(&p).unwrap();
         assert_eq!(Settings::load(&p), s);
     }

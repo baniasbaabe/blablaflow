@@ -4,3 +4,4 @@ pub mod settings;
 pub mod db;
 pub mod insights;
 pub mod text;
+pub mod hotkey;

@@ -447,7 +447,7 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.add_dict("Grüße", None).unwrap();
         assert!(matches!(db.add_dict("grüße", None), Err(DbError::Duplicate)));
-        assert!(matches!(db.add_dict("GRÜSSE", None), Ok(_)));
+        assert!(db.add_dict("GRÜSSE", None).is_ok());
         assert!(matches!(db.add_dict(&"x".repeat(61), None), Err(DbError::TooLong)));
         db.add_dict("gonna", Some("going to")).unwrap();
         let d = db.list_dict().unwrap();
