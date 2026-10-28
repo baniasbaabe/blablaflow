@@ -95,13 +95,14 @@ fn main() {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            tauri::WindowEvent::Moved(pos) if window.label() == "overlay" => {
+            tauri::WindowEvent::Moved(pos) if window.label() == "overlay" && commands::BAR_DRAGGING.load(Ordering::SeqCst) => {
                 // Moved fires continuously while dragging: remember the latest and save once it settles.
                 let first = PENDING_BAR_POS.lock().unwrap().replace((pos.x, pos.y)).is_none();
                 if first {
                     let shared = window.state::<Arc<Shared>>().inner().clone();
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(500));
+                        commands::BAR_DRAGGING.store(false, Ordering::SeqCst);
                         let Some(p) = PENDING_BAR_POS.lock().unwrap().take() else { return };
                         let mut st = shared.settings();
                         if st.bar_position != Some(p) {
@@ -150,6 +151,7 @@ fn main() {
             commands::hide_bar_for,
             commands::set_language,
             commands::show_main,
+            commands::bar_drag_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running blablaflow");

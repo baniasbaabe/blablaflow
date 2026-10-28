@@ -74,7 +74,7 @@ function Bar() {
   }, [bar]);
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) getCurrentWindow().startDragging();
+    if (e.button === 0) api.barDragStart().then(() => getCurrentWindow().startDragging());
   };
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();

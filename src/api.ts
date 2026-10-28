@@ -116,6 +116,7 @@ export const api = {
   hideBarFor: (minutes: number) => invoke<void>("hide_bar_for", { minutes }),
   setLanguage: (language: string | null) => invoke<void>("set_language", { language }),
   showMain: () => invoke<void>("show_main"),
+  barDragStart: () => invoke<void>("bar_drag_start"),
 };
 
 /** Common Whisper languages offered in pickers; "auto" means detect. */

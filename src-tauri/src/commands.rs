@@ -325,3 +325,12 @@ pub fn show_main(s: S) {
         let _ = w.set_focus();
     }
 }
+
+/// Set by the bar when the user starts dragging it, so only real drags are saved as its position
+/// (programmatic moves at startup also fire `Moved`).
+pub static BAR_DRAGGING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub fn bar_drag_start() {
+    BAR_DRAGGING.store(true, Ordering::SeqCst);
+}
