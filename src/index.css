@@ -1,1 +1,9 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+html:not(.overlay) body {
+  @apply bg-white text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+}
+body {
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+}
