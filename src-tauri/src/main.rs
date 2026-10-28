@@ -57,6 +57,10 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             let shared = dictation::start(app.handle().clone(), data_dir)?;
             app.manage(shared.clone());
+            // Windows are created only now: their pages call commands that need the managed state.
+            for w in &app.config().app.windows {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), w)?.build()?;
+            }
             place_overlay(app.handle(), &shared)?;
 
             let open = MenuItem::with_id(app, "open", "Open blablaflow", true, None::<&str>)?;
