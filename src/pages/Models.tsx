@@ -39,7 +39,8 @@ export function ModelPicker({ active, onSelect }: { active: string; onSelect: (f
             <div className="text-xs text-neutral-500">{m.size_mb} MB</div>
             {m.file in progress && (
               <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
-                <div className="h-full bg-neutral-900 dark:bg-white" style={{ width: `${Math.round(progress[m.file] * 100)}%` }} />
+                <div className="h-full origin-left bg-neutral-900 transition-transform duration-200 ease-linear dark:bg-white"
+                  style={{ transform: `scaleX(${progress[m.file]})` }} />
               </div>
             )}
           </div>

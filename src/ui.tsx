@@ -31,14 +31,14 @@ export function Button({ children, onClick, variant = "default", disabled, type 
   }[variant];
   return (
     <button type={type} onClick={onClick} disabled={disabled}
-      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 ${styles}`}>
+      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-[transform,background-color,color] duration-150 ease-out motion-safe:active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40 ${styles}`}>
       {children}
     </button>
   );
 }
 
 export const inputClass =
-  "w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900";
+  "w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/10 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:ring-white/15";
 
 export function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -48,8 +48,8 @@ export function Toggle({ label, hint, checked, onChange }: { label: string; hint
         {hint && <span className="block text-xs text-neutral-500">{hint}</span>}
       </span>
       <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
-        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${checked ? "bg-neutral-900 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}>
-        <span className={`absolute top-0.5 size-4 rounded-full bg-white transition-all dark:bg-neutral-900 ${checked ? "left-4.5" : "left-0.5"}`} />
+        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-[background-color,transform] duration-200 ease-out motion-safe:active:scale-[0.95] ${checked ? "bg-neutral-900 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}>
+        <span className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out dark:bg-neutral-900 ${checked ? "translate-x-4" : "translate-x-0"}`} />
       </button>
     </label>
   );
@@ -163,7 +163,7 @@ export function HotkeyInput({ value, action, onChange }: { value: string | null;
     <div>
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => setRecording(true)}
-          className={`${inputClass} text-left font-mono ${recording ? "border-neutral-900 dark:border-white" : ""}`}>
+          className={`${inputClass} text-left font-mono transition-[border-color,box-shadow] duration-150 ease-out ${recording ? "border-neutral-900 ring-2 ring-neutral-900/10 dark:border-white dark:ring-white/15" : ""}`}>
           {recording ? "Press keys…" : value || "Not set"}
         </button>
         {value && !recording && <Button variant="ghost" onClick={() => onChange(null)}>✕</Button>}

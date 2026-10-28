@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -45,10 +45,29 @@ async function openMenu() {
   await menu.popup();
 }
 
+/** One stacked layer per state; switching crossfades with a slight scale instead of resizing the pill. */
+function Layer({ show, children }: { show: boolean; children: ReactNode }) {
+  return (
+    <div
+      aria-hidden={!show}
+      className={`absolute inset-0 flex items-center justify-center transition-[opacity,transform] ease-out ${
+        show ? "scale-100 opacity-100 duration-150" : "pointer-events-none opacity-0 duration-100 motion-safe:scale-[0.92]"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+const pill = "flex h-9 items-center justify-center gap-1 rounded-full bg-neutral-900/90 text-white shadow-lg ring-1 ring-white/10";
+
 function Bar() {
   const [bar, setBar] = useState<BarState>({ state: "Idle" });
   const [levels, setLevels] = useState<number[]>(Array(BARS).fill(0));
   const prev = useRef<BarState["state"]>("Idle");
+  // The last recording/message stays rendered while its layer fades out.
+  const [rec, setRec] = useState<Extract<BarState, { state: "Recording" }>>({ state: "Recording", mode: "PushToTalk", elapsed_ms: 0 });
+  const [msg, setMsg] = useState<Extract<BarState, { state: "Message" }>>({ state: "Message", text: "", error: false });
 
   useEffect(() => {
     const un1 = listen<BarState>("bar", async (e) => {
@@ -57,7 +76,10 @@ function Bar() {
         const { sounds } = await api.getSettings();
         if (sounds) blip(next.state === "Recording" ? 660 : 440);
       }
+      if (next.state === "Recording" && prev.current !== "Recording") setLevels(Array(BARS).fill(0));
       prev.current = next.state;
+      if (next.state === "Recording") setRec(next);
+      if (next.state === "Message") setMsg(next);
       setBar(next);
     });
     const un2 = listen<number>("level", (e) => setLevels((l) => [...l.slice(1), e.payload]));
@@ -81,43 +103,34 @@ function Bar() {
     openMenu();
   };
 
-  const pill = "flex items-center justify-center gap-1 rounded-full bg-neutral-900/90 text-white shadow-lg ring-1 ring-white/10";
-  let body;
-  switch (bar.state) {
-    case "Recording":
-      body = (
-        <div className={`${pill} h-9 px-4`}>
-          {bar.mode === "Command" && <span className="mr-1 text-xs font-medium text-amber-300">Command</span>}
-          {levels.map((l, i) => (
-            <span key={i} className="w-1 rounded-full bg-white" style={{ height: `${4 + Math.min(1, l * 12) * 18}px` }} />
-          ))}
-          {bar.elapsed_ms >= 10_000 && <span className="ml-2 text-xs tabular-nums text-white/70">{fmt(bar.elapsed_ms)}</span>}
-        </div>
-      );
-      break;
-    case "Processing":
-      body = (
-        <div className={`${pill} h-9 w-24`}>
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="size-1.5 animate-pulse rounded-full bg-white" style={{ animationDelay: `${i * 150}ms` }} />
-          ))}
-        </div>
-      );
-      break;
-    case "Message":
-      body = (
-        <div className={`${pill} h-9 max-w-[216px] px-4 text-xs ${bar.error ? "text-red-300" : ""}`}>
-          <span className="truncate" title={bar.text}>{bar.text}</span>
-        </div>
-      );
-      break;
-    default:
-      body = <div className="h-1.5 w-10 rounded-full bg-neutral-900/70 ring-1 ring-white/30" />;
-  }
-
   return (
-    <div className="flex h-screen w-screen cursor-grab items-center justify-center select-none" onMouseDown={onMouseDown} onContextMenu={onContextMenu}>
-      {body}
+    <div className="relative h-screen w-screen cursor-grab select-none active:cursor-grabbing" onMouseDown={onMouseDown} onContextMenu={onContextMenu}>
+      <Layer show={bar.state === "Idle"}>
+        <div className="h-1.5 w-10 rounded-full bg-neutral-900/70 ring-1 ring-white/30 transition-transform duration-150 ease-out hover:scale-x-125" />
+      </Layer>
+      <Layer show={bar.state === "Recording"}>
+        <div className={`${pill} px-4`}>
+          {rec.mode === "Command" && <span className="mr-1 text-xs font-medium text-amber-300">Command</span>}
+          {levels.map((l, i) => (
+            // scaleY instead of height: no layout work on every level update.
+            <span key={i} className="h-5 w-1 rounded-full bg-white transition-transform duration-75 ease-out"
+              style={{ transform: `scaleY(${0.2 + Math.min(1, l * 12) * 0.8})` }} />
+          ))}
+          {rec.elapsed_ms >= 10_000 && <span className="ml-2 text-xs tabular-nums text-white/70">{fmt(rec.elapsed_ms)}</span>}
+        </div>
+      </Layer>
+      <Layer show={bar.state === "Processing"}>
+        <div className={`${pill} w-20`}>
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="processing-dot size-1.5 rounded-full bg-white" style={{ animationDelay: `${i * 150}ms` }} />
+          ))}
+        </div>
+      </Layer>
+      <Layer show={bar.state === "Message"}>
+        <div className={`${pill} max-w-[216px] px-4 text-xs ${msg.error ? "text-red-300" : ""}`}>
+          <span className="truncate" title={msg.text}>{msg.text}</span>
+        </div>
+      </Layer>
     </div>
   );
 }

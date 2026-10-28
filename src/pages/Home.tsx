@@ -45,7 +45,7 @@ export default function Home() {
                     {[e.kind !== "Dictation" && e.kind, e.app, e.words ? `${e.words} words` : ""].filter(Boolean).join(" · ")}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-start gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="flex shrink-0 items-start gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
                   {e.status === "Done" && <Button variant="ghost" onClick={() => act(api.historyCopy(e.id, false))}>Copy</Button>}
                   {e.status === "Done" && e.raw_text !== e.final_text && e.kind === "Dictation" &&
                     <Button variant="ghost" onClick={() => act(api.historyCopy(e.id, true))}>Undo AI edit</Button>}

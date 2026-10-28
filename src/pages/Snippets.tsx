@@ -52,7 +52,7 @@ export default function Snippets() {
               <div className="text-sm font-medium">"{s.cue}"</div>
               <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-neutral-500">{s.text}</p>
             </div>
-            <div className="flex shrink-0 gap-1 opacity-0 group-hover:opacity-100">
+            <div className="flex shrink-0 gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
               <Button variant="ghost" onClick={() => setEdit(s)}>Edit</Button>
               <Button variant="danger" onClick={() => api.snippetDelete(s.id).then(load)}>Delete</Button>
             </div>

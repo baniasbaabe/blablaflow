@@ -63,7 +63,7 @@ export default function Scratchpad() {
         {notes.map((n) => (
           <div key={n.id} className="group flex items-center">
             <button onClick={() => open(n)} className={`min-w-0 flex-1 truncate rounded-lg px-3 py-1.5 text-left text-sm ${current?.id === n.id ? "bg-neutral-100 dark:bg-neutral-800" : "text-neutral-600 dark:text-neutral-400"}`}>{n.title}</button>
-            <button aria-label="Delete note" onClick={() => remove(n.id)} className="px-2 text-neutral-400 opacity-0 group-hover:opacity-100 hover:text-red-600">✕</button>
+            <button aria-label="Delete note" onClick={() => remove(n.id)} className="px-2 text-neutral-400 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 focus:opacity-100 hover:text-red-600">✕</button>
           </div>
         ))}
       </aside>

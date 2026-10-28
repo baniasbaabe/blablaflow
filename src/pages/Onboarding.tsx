@@ -58,10 +58,13 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
     <div className="flex h-screen items-center justify-center bg-neutral-50 p-8 dark:bg-neutral-950">
       <Card className="w-full max-w-lg p-8">
         <div className="mb-6 flex gap-1.5">
-          {STEPS.map((x, i) => <div key={x} className={`h-1 flex-1 rounded-full ${i <= step ? "bg-neutral-900 dark:bg-white" : "bg-neutral-200 dark:bg-neutral-800"}`} />)}
+          {STEPS.map((x, i) => <div key={x} className={`h-1 flex-1 rounded-full transition-colors duration-300 ease-out ${i <= step ? "bg-neutral-900 dark:bg-white" : "bg-neutral-200 dark:bg-neutral-800"}`} />)}
         </div>
-        <h1 className="mb-4 text-xl font-semibold">{STEPS[step]}</h1>
-        {body[step]}
+        {/* Seen once: a short enter per step is welcome here. Re-keyed so @starting-style runs on every step. */}
+        <div key={step} className="transition-[opacity,transform] duration-300 ease-out starting:opacity-0 motion-safe:starting:translate-y-1.5">
+          <h1 className="mb-4 text-xl font-semibold">{STEPS[step]}</h1>
+          {body[step]}
+        </div>
         <div className="mt-8 flex justify-between">
           <Button variant="ghost" disabled={step === 0} onClick={() => setStep(step - 1)}>Back</Button>
           {step < STEPS.length - 1

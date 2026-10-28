@@ -56,7 +56,7 @@ export default function App() {
         <div className="mb-4 px-3 pt-2 text-lg font-semibold tracking-tight">blablaflow</div>
         {(Object.keys(PAGES) as PageId[]).map((id) => (
           <button key={id} onClick={() => setPage(id)}
-            className={`rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${page === id
+            className={`rounded-lg px-3 py-1.5 text-left text-sm transition-[background-color,color,transform] duration-100 ease-out motion-safe:active:scale-[0.98] ${page === id
               ? "bg-white font-medium shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-800 dark:ring-neutral-700"
               : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"}`}>
             {PAGES[id][0]}

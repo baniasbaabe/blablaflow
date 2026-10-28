@@ -69,7 +69,7 @@ export default function Transforms() {
               <p className="mt-1 line-clamp-2 text-sm text-neutral-500">{t.prompt}</p>
               <p className="mt-1 font-mono text-xs text-neutral-400">{t.hotkey ?? "No shortcut"}</p>
             </div>
-            <div className="flex shrink-0 gap-1 opacity-0 group-hover:opacity-100">
+            <div className="flex shrink-0 gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
               <Button variant="ghost" onClick={() => setEdit(t)}>Edit</Button>
               {!t.builtin && <Button variant="danger" onClick={() => api.transformDelete(t.id).then(load)}>Delete</Button>}
             </div>
