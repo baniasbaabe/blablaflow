@@ -1,5 +1,5 @@
 //! The running app: hotkey triggers → recording → background job → paste → history.
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, RwLock};
