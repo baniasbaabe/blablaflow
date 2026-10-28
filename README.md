@@ -18,7 +18,7 @@ An open-source take on [Wispr Flow](https://wisprflow.ai)'s dictation. Speech re
    5. **Try it** – a practice box to check everything works.
 3. blablaflow now lives in the system tray (bottom-right, next to the clock). Closing the window keeps it running; quit it from the tray icon.
 
-**Requirements:** Windows 10 or 11 (64-bit). A graphics card (NVIDIA, AMD or Intel) makes transcription much faster; without one, the CPU is used automatically.
+**Requirements:** Windows 10 or 11 (64-bit) on a CPU with AVX2 (Intel 2013+ / AMD 2015+). A graphics card (NVIDIA, AMD or Intel) makes transcription much faster; without one, the CPU is used automatically.
 
 ## Use it
 
@@ -98,6 +98,7 @@ Build in a short folder: whisper.cpp's GPU build creates paths longer than Windo
 
 ```powershell
 $env:CARGO_TARGET_DIR = "C:\t"
+$env:GGML_NATIVE = "OFF"; $env:GGML_AVX2 = "ON"; $env:GGML_FMA = "ON"; $env:GGML_F16C = "ON"   # portable installer
 npm ci
 npx tauri dev --features vulkan     # run
 npx tauri build --features vulkan   # installer in C:\t\release\bundle\nsis

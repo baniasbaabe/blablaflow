@@ -23,6 +23,12 @@ jobs:
     env:
       # whisper.cpp's Vulkan shader build exceeds Windows' 260-character path limit under the default target dir.
       CARGO_TARGET_DIR: C:\t
+      # Build whisper.cpp for any AVX2 CPU, not the runner's own (its AVX-512 code crashes on most PCs).
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
       BLABLAFLOW_TEST_MODEL: ${{ github.workspace }}/ggml-tiny.bin
       BLABLAFLOW_TEST_WAV: ${{ github.workspace }}/jfk.wav
     steps:
@@ -30,7 +36,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: '. -> C:\t' }
+        with: { workspaces: '. -> C:\t', prefix-key: v2-portable }
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci && npm run build
