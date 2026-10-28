@@ -54,10 +54,13 @@ All of them can be changed in Settings.
 
 Needs Rust (stable, MSVC), Node 22, the Visual Studio C++ build tools and – for GPU support – the [Vulkan SDK](https://vulkan.lunarg.com/).
 
+Build in a short folder: whisper.cpp's GPU build creates paths longer than Windows' 260-character limit.
+
 ```powershell
+$env:CARGO_TARGET_DIR = "C:\t"
 npm ci
 npx tauri dev --features vulkan     # run
-npx tauri build --features vulkan   # installer in target/release/bundle/nsis
+npx tauri build --features vulkan   # installer in C:\t\release\bundle\nsis
 cargo test --workspace              # tests
 ```
 

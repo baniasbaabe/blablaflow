@@ -9,10 +9,14 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      # whisper.cpp's Vulkan shader build exceeds Windows' 260-character path limit under the default target dir.
+      CARGO_TARGET_DIR: C:\t
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with: { workspaces: '. -> C:\t' }
       - uses: jakoch/install-vulkan-sdk-action@v1.7.0
         with: { vulkan_version: latest, install_runtime: true, cache: true, stripdown: true }
       - uses: actions/setup-node@v5
