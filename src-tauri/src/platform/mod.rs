@@ -25,5 +25,4 @@ pub struct Foreground {
     /// Lowercased exe file name, e.g. "slack.exe".
     pub exe: String,
     pub title: String,
-    pub hwnd: isize,
 }

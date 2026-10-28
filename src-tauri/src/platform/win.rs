@@ -153,7 +153,7 @@ pub fn foreground() -> Foreground {
             }
             let _ = windows::Win32::Foundation::CloseHandle(h);
         }
-        Foreground { exe, title, hwnd: hwnd.0 as isize }
+        Foreground { exe, title }
     }
 }
 

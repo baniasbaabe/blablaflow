@@ -54,7 +54,7 @@ impl Recorder {
         }));
 
         let sh = shared.clone();
-        let mut push = move |mono: Vec<f32>| {
+        let push = move |mono: Vec<f32>| {
             let chunk = resample(&mono, rate);
             let mut s = sh.lock().unwrap();
             if let Some(w) = s.writer.as_mut() {
