@@ -16,6 +16,11 @@ pub fn paste_combo(exe: &str) -> PasteCombo {
     }
 }
 
+/// Simulating Ctrl+C to read a selection is unsafe where Ctrl+C means "interrupt" (terminals).
+pub fn copy_fallback_allowed(exe: &str) -> bool {
+    paste_combo(exe) == PasteCombo::CtrlV
+}
+
 /// Restore the user's clipboard only if the paste surely happened; otherwise the text stays
 /// on the clipboard so the user can paste it by hand.
 pub fn paste_restore_policy(send_ok: bool, fg_before: isize, fg_after: isize) -> bool {
@@ -37,7 +42,19 @@ mod tests {
     #[test]
     fn paste_restore_policy_cases() {
         assert!(paste_restore_policy(true, 1, 1));
-        assert!(!paste_restore_policy(false, 1, 1), "SendInput blocked (e.g. elevated window)");
+        assert!(!paste_restore_policy(false, 1, 1), "SendInput reported failure");
         assert!(!paste_restore_policy(true, 1, 2), "focus moved during paste");
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    #[test]
+    fn no_ctrl_c_in_terminals() {
+        assert!(!copy_fallback_allowed("WindowsTerminal.exe"), "Ctrl+C would interrupt the running program");
+        assert!(!copy_fallback_allowed("conhost.exe"));
+        assert!(copy_fallback_allowed("notepad.exe"));
     }
 }

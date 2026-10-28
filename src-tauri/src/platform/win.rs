@@ -1,19 +1,22 @@
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use blablaflow_core::hotkey::Key;
-use blablaflow_core::insert::{PasteCombo, paste_combo, paste_restore_policy};
+use blablaflow_core::insert::{PasteCombo, copy_fallback_allowed, paste_combo, paste_restore_policy};
 use uiautomation::UIAutomation;
 use uiautomation::patterns::{UITextPattern, UIValuePattern};
 use uiautomation::types::TextPatternRangeEndpoint as End;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY,
     VK_CONTROL, VK_INSERT, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
@@ -33,6 +36,8 @@ static HOOK: OnceLock<HookFn> = OnceLock::new();
 /// A binding fired while Win/Alt was held; mask their release (see `mask_release`).
 static WIN_USED: AtomicBool = AtomicBool::new(false);
 static ALT_USED: AtomicBool = AtomicBool::new(false);
+/// Serializes our clipboard save/paste/restore sequences (worker and hotkey actions run on different threads).
+static CLIPBOARD: Mutex<()> = Mutex::new(());
 /// Unassigned virtual key: tapping it makes Windows treat Win/Alt as part of a chord.
 const VK_MASK: u16 = 0xE8;
 
@@ -70,18 +75,30 @@ fn mask_release(key: Key) {
     }
 }
 
+fn vk_down(vk: u16) -> bool {
+    unsafe { GetAsyncKeyState(vk as i32) < 0 }
+}
+
+/// Whether a key (other than the one the hook is processing) is physically down right now.
+pub fn is_key_down(key: Key) -> bool {
+    match key {
+        Key::Win => vk_down(VK_LWIN.0) || vk_down(VK_RWIN.0),
+        k => k.to_vk().is_some_and(vk_down),
+    }
+}
+
 fn dispatch(key: Key, down: bool) -> bool {
     let Some(cb) = HOOK.get() else { return false };
     if !down {
         mask_release(key);
     }
     let reply = cb(key, down);
-    if reply.fired {
-        let held = |vk: VIRTUAL_KEY| unsafe { GetAsyncKeyState(vk.0 as i32) } < 0;
-        if held(VK_LWIN) || held(VK_RWIN) {
+    // Inside the hook GetAsyncKeyState isn't updated for the current key yet, so use the event itself.
+    if reply.fired && down {
+        if key == Key::Win || vk_down(VK_LWIN.0) || vk_down(VK_RWIN.0) {
             WIN_USED.store(true, Ordering::SeqCst);
         }
-        if held(VK_MENU) {
+        if key == Key::Alt || vk_down(VK_MENU.0) {
             ALT_USED.store(true, Ordering::SeqCst);
         }
     }
@@ -151,7 +168,7 @@ pub fn foreground() -> Foreground {
                 let full = String::from_utf16_lossy(&path[..len as usize]);
                 exe = full.rsplit('\\').next().unwrap_or_default().to_lowercase();
             }
-            let _ = windows::Win32::Foundation::CloseHandle(h);
+            let _ = CloseHandle(h);
         }
         Foreground { exe, title }
     }
@@ -193,29 +210,77 @@ pub fn read_context(max_chars: usize) -> Option<String> {
     })
 }
 
-/// Waits (up to 1 s) for the user to let go of modifiers so our paste isn't read as e.g. Win+Ctrl+V.
-fn wait_modifiers_released() {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let held = || {
-        [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN].iter().any(|vk| unsafe { GetAsyncKeyState(vk.0 as i32) } < 0)
-    };
-    while held() && Instant::now() < deadline {
+/// Waits for the user to let go of modifiers so our keystrokes aren't read as e.g. Win+Ctrl+V.
+/// Returns false if they are still held after `timeout`.
+fn wait_modifiers_released(timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    let held = || [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN].iter().any(|vk| vk_down(vk.0));
+    while held() {
+        if Instant::now() >= deadline {
+            return false;
+        }
         std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+const MODIFIER_WAIT: Duration = Duration::from_secs(5);
+
+fn process_elevated(pid: Option<u32>) -> Option<bool> {
+    unsafe {
+        let process = match pid {
+            Some(pid) => OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?,
+            None => GetCurrentProcess(),
+        };
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+        if pid.is_some() {
+            let _ = CloseHandle(process);
+        }
+        opened.ok()?;
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut len = 0u32;
+        let r = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        );
+        let _ = CloseHandle(token);
+        r.ok()?;
+        Some(elevation.TokenIsElevated != 0)
     }
 }
 
+/// Windows silently drops our keystrokes into windows running as administrator when we aren't (UIPI).
+fn foreground_blocks_input() -> bool {
+    if process_elevated(None) == Some(true) {
+        return false;
+    }
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid)) };
+    // Can't inspect the target: assume the worst so the text stays on the clipboard.
+    process_elevated(Some(pid)).unwrap_or(true)
+}
+
 /// Selected text: UI Automation first, then a simulated Ctrl+C with the clipboard restored.
-pub fn read_selection() -> Option<String> {
+/// The Ctrl+C fallback is only used when UIA can't see the field, and never in terminals.
+pub fn read_selection(exe: &str) -> Option<String> {
+    // Some(Some(text)) = selection; Some(None) = UIA works and nothing is selected; None = UIA unavailable.
     let uia = with_timeout(Duration::from_millis(300), || {
         let el = UIAutomation::new().ok()?.get_focused_element().ok()?;
         let tp = el.get_pattern::<UITextPattern>().ok()?;
-        let text = tp.get_selection().ok()?.into_iter().next()?.get_text(-1).ok()?;
-        (!text.is_empty()).then_some(text)
+        let text = tp.get_selection().ok()?.into_iter().next().and_then(|r| r.get_text(-1).ok());
+        Some(text.filter(|t| !t.is_empty()))
     });
-    if uia.is_some() {
-        return uia;
+    if let Some(sel) = uia {
+        return sel;
     }
-    wait_modifiers_released();
+    if !copy_fallback_allowed(exe) || !wait_modifiers_released(MODIFIER_WAIT) {
+        return None;
+    }
+    let _clip = CLIPBOARD.lock().unwrap();
     let mut cb = arboard::Clipboard::new().ok()?;
     let prev = cb.get_text().ok();
     let seq = unsafe { GetClipboardSequenceNumber() };
@@ -227,6 +292,8 @@ pub fn read_selection() -> Option<String> {
     if unsafe { GetClipboardSequenceNumber() } == seq {
         return None;
     }
+    // The sequence number changes when the clipboard is emptied, before the new text lands.
+    std::thread::sleep(Duration::from_millis(30));
     let text = cb.get_text().ok();
     if let Some(p) = prev {
         let _ = cb.set_text(p);
@@ -237,8 +304,12 @@ pub fn read_selection() -> Option<String> {
 /// Pastes `text` into the focused app and restores the previous clipboard text.
 /// shortcut: only text clipboard content is restored (images/files are lost); enumerate formats to keep them.
 pub fn insert_text(text: &str, exe: &str) -> Result<InsertResult> {
-    wait_modifiers_released();
+    let _clip = CLIPBOARD.lock().unwrap();
     let mut cb = arboard::Clipboard::new()?;
+    if !wait_modifiers_released(MODIFIER_WAIT) || foreground_blocks_input() {
+        cb.set_text(text)?;
+        return Ok(InsertResult::LeftOnClipboard);
+    }
     let prev = cb.get_text().ok();
     cb.set_text(text)?;
     let before = unsafe { GetForegroundWindow() }.0 as isize;
@@ -263,6 +334,7 @@ pub fn insert_text(text: &str, exe: &str) -> Result<InsertResult> {
 
 /// Copies text to the clipboard without pasting.
 pub fn copy_text(text: &str) -> Result<()> {
+    let _clip = CLIPBOARD.lock().unwrap();
     arboard::Clipboard::new()?.set_text(text)?;
     Ok(())
 }
@@ -288,7 +360,7 @@ pub fn free_space(dir: &Path) -> Option<u64> {
 pub fn show_no_activate(window: &tauri::WebviewWindow) {
     if let Ok(h) = window.hwnd() {
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(HWND(h.0), windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE);
+            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindowAsync(HWND(h.0), windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE);
         }
     }
 }

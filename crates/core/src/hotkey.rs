@@ -38,6 +38,23 @@ impl Key {
         }
     }
 
+    /// The Windows virtual-key code (left variant for modifiers).
+    pub fn to_vk(self) -> Option<u16> {
+        Some(match self {
+            Key::Shift => 0x10,
+            Key::Ctrl => 0x11,
+            Key::Alt => 0x12,
+            Key::Win => 0x5B,
+            Key::Space => 0x20,
+            Key::Escape => 0x1B,
+            Key::CapsLock => 0x14,
+            Key::Char(c) => c as u16,
+            Key::F(n) => 0x6F + n as u16,
+            Key::Mouse(n) => *[0x01, 0x02, 0x04, 0x05, 0x06].get(n.checked_sub(1)? as usize)?,
+            Key::Other(vk) => vk,
+        })
+    }
+
     pub fn is_modifier(self) -> bool {
         matches!(self, Key::Ctrl | Key::Shift | Key::Win | Key::Alt)
     }
@@ -223,6 +240,18 @@ impl HotkeyMatcher {
         }
     }
 
+    /// Replaces the bindings without resetting held keys or a running recording.
+    pub fn set_bindings(&mut self, bindings: Vec<(Hotkey, Action)>) {
+        self.bindings = bindings.iter().map(|(h, a)| (h.set(), *a)).collect();
+    }
+
+    /// Drops held keys for which `still_down` is false. Key-ups that happen on the secure
+    /// desktop (Ctrl+Alt+Del, Win+L, UAC) never reach the hook and would otherwise stick.
+    pub fn retain_held(&mut self, still_down: impl Fn(Key) -> bool) {
+        self.held.retain(|k| still_down(*k));
+        self.swallowed.retain(|k| still_down(*k));
+    }
+
     fn matching(&self) -> Option<Action> {
         self.bindings.iter().find(|(k, _)| *k == self.held).map(|(_, a)| *a)
     }
@@ -234,7 +263,9 @@ impl HotkeyMatcher {
                 return MatchResult { events: vec![], swallow: self.swallowed.contains(&key) };
             }
             let events = self.on_down(now_ms);
-            let swallow = !events.is_empty() && !key.is_modifier();
+            // Only keys that complete a binding are hidden from apps; a shortcut typed over a
+            // hold-to-talk chord cancels the recording but still reaches Windows.
+            let swallow = !events.is_empty() && !key.is_modifier() && self.matching().is_some();
             if swallow {
                 self.swallowed.insert(key);
             }
@@ -519,5 +550,71 @@ mod vk_tests {
         let mut v = vec![Key::from_vk(0x5B), Key::from_vk(0xA4), Key::from_vk(0x31)];
         v.sort();
         assert_eq!(h.0, v);
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use Key::*;
+
+    fn m() -> HotkeyMatcher {
+        HotkeyMatcher::new(
+            vec![
+                (Hotkey::parse("Ctrl+Win").unwrap(), Action::PushToTalk),
+                (Hotkey::parse("Ctrl+Win+Space").unwrap(), Action::HandsFree),
+                (Hotkey::parse("Escape").unwrap(), Action::Cancel),
+            ],
+            500,
+        )
+    }
+
+    #[test]
+    fn shortcut_typed_over_ptt_cancels_but_passes_through() {
+        let mut m = m();
+        m.on_event(Ctrl, true, 0);
+        m.on_event(Win, true, 10);
+        let r = m.on_event(Char('D'), true, 80);
+        assert_eq!(r.events, vec![Trigger::Cancel]);
+        assert!(!r.swallow, "Ctrl+Win+D must still reach Windows");
+        assert!(!m.on_event(Char('D'), false, 90).swallow);
+    }
+
+    #[test]
+    fn stale_held_keys_can_be_dropped() {
+        let mut m = m();
+        // Ctrl+Alt+Del: key-ups happen on the secure desktop and never arrive.
+        m.on_event(Ctrl, true, 0);
+        m.on_event(Alt, true, 5);
+        m.on_event(Other(0x2E), true, 10);
+        m.retain_held(|_| false);
+        let t: Vec<_> = [(Ctrl, true, 1000), (Win, true, 1010)].iter().flat_map(|&(k, d, t)| m.on_event(k, d, t).events).collect();
+        assert_eq!(t, vec![Trigger::Start(Mode::PushToTalk)]);
+    }
+
+    #[test]
+    fn rebinding_keeps_recording_state() {
+        let mut m = m();
+        for (k, t) in [(Ctrl, 0), (Win, 5), (Space, 10)] {
+            m.on_event(k, true, t);
+        }
+        for (k, t) in [(Space, 20), (Win, 30), (Ctrl, 40)] {
+            m.on_event(k, false, t);
+        }
+        m.set_bindings(vec![
+            (Hotkey::parse("Ctrl+Win").unwrap(), Action::PushToTalk),
+            (Hotkey::parse("Ctrl+Win+Space").unwrap(), Action::HandsFree),
+        ]);
+        let t: Vec<_> = [(Ctrl, true, 5000), (Win, true, 5010)].iter().flat_map(|&(k, d, t)| m.on_event(k, d, t).events).collect();
+        assert_eq!(t, vec![Trigger::Stop], "hands-free survives a settings change");
+    }
+
+    #[test]
+    fn to_vk_roundtrips() {
+        for k in [Win, Ctrl, Alt, Shift, Space, Escape, CapsLock, Char('A'), Char('7'), F(5), Other(0x2E)] {
+            assert_eq!(Key::from_vk(k.to_vk().unwrap()), k);
+        }
+        assert_eq!(Mouse(3).to_vk(), Some(0x04));
+        assert_eq!(Mouse(4).to_vk(), Some(0x05));
     }
 }

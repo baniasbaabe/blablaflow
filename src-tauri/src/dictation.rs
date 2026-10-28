@@ -64,6 +64,9 @@ pub struct Shared {
     pub db: Mutex<Db>,
     pub settings: RwLock<Settings>,
     pub paused: AtomicBool,
+    /// True while the microphone is recording; the worker waits before pasting so it never types into
+    /// a chord the user is holding for the next dictation.
+    recording: AtomicBool,
     matcher: Mutex<HotkeyMatcher>,
     stt: Mutex<Option<(String, Arc<Stt>)>>,
     triggers: Sender<Trigger>,
@@ -117,7 +120,7 @@ impl Shared {
                 }
             }
         }
-        *self.matcher.lock().unwrap() = HotkeyMatcher::new(bindings, DOUBLE_TAP_MS);
+        self.matcher.lock().unwrap().set_bindings(bindings);
     }
 
     pub fn bar(&self, state: BarState) {
@@ -205,6 +208,7 @@ pub fn start(app: AppHandle, data_dir: PathBuf) -> Result<Arc<Shared>> {
         db: Mutex::new(db),
         settings: RwLock::new(settings),
         paused: AtomicBool::new(false),
+        recording: AtomicBool::new(false),
         matcher: Mutex::new(HotkeyMatcher::new(vec![], DOUBLE_TAP_MS)),
         stt: Mutex::new(None),
         triggers,
@@ -217,7 +221,12 @@ pub fn start(app: AppHandle, data_dir: PathBuf) -> Result<Arc<Shared>> {
         if s.paused.load(Ordering::SeqCst) {
             return HookReply::default();
         }
-        let r = s.matcher.lock().unwrap().on_event(key, down, now_ms() as u64);
+        let mut m = s.matcher.lock().unwrap();
+        if down {
+            m.retain_held(|k| k == key || platform::is_key_down(k));
+        }
+        let r = m.on_event(key, down, now_ms() as u64);
+        drop(m);
         for t in &r.events {
             let _ = s.triggers.send(*t);
         }
@@ -265,6 +274,7 @@ fn begin(s: &Arc<Shared>, mode: Mode) -> Result<Active> {
         audio_path: Some(rel),
         kind: if mode == Mode::Command { Kind::Command } else { Kind::Dictation },
     })?;
+    s.recording.store(true, Ordering::SeqCst);
     s.bar(BarState::Recording { mode, elapsed_ms: 0 });
     // Audio is already flowing; reading nearby text (up to 200 ms) doesn't delay the start.
     // Command Mode reads the selection after release instead.
@@ -273,6 +283,7 @@ fn begin(s: &Arc<Shared>, mode: Mode) -> Result<Active> {
 }
 
 fn discard(s: &Shared, a: Active) {
+    s.recording.store(false, Ordering::SeqCst);
     let _ = a.recorder.stop();
     let _ = std::fs::remove_file(&a.wav);
     let _ = s.db.lock().unwrap().delete_history(a.history_id);
@@ -280,12 +291,16 @@ fn discard(s: &Shared, a: Active) {
 }
 
 fn finish(s: &Shared, a: Active) {
+    s.recording.store(false, Ordering::SeqCst);
     let duration_ms = a.started.elapsed().as_millis() as i64;
     match a.recorder.stop() {
         Ok(samples) => {
-            if let Ok(Some(mut e)) = s.db.lock().unwrap().get_history(a.history_id) {
-                e.status = Status::Processing;
-                let _ = s.db.lock().unwrap().update_history(&e);
+            {
+                let db = s.db.lock().unwrap();
+                if let Ok(Some(mut e)) = db.get_history(a.history_id) {
+                    e.status = Status::Processing;
+                    let _ = db.update_history(&e);
+                }
             }
             s.bar(BarState::Processing);
             let _ = s.jobs.send(Job::Dictation {
@@ -377,7 +392,15 @@ fn engine(s: &Shared, need_stt: bool) -> Result<AppEngine, String> {
     Ok(AppEngine { stt: if need_stt { Some(s.stt()?) } else { None }, key: llm::get_key(), model: st.groq_model })
 }
 
+/// Blocks while a new recording is running (the user may be holding its hotkey).
+fn wait_not_recording(s: &Shared) {
+    while s.recording.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn paste(s: &Shared, text: &str, exe: &str, notice: Option<String>) {
+    wait_not_recording(s);
     match platform::insert_text(text, exe) {
         Ok(InsertResult::Pasted) => match notice {
             Some(n) => s.message(n, false),
@@ -413,9 +436,10 @@ fn process_dictation(
     duration_ms: i64,
 ) -> Result<(), String> {
     let fail = |e: String| {
-        if let Ok(Some(mut h)) = s.db.lock().unwrap().get_history(history_id) {
+        let db = s.db.lock().unwrap();
+        if let Ok(Some(mut h)) = db.get_history(history_id) {
             h.status = Status::Failed;
-            let _ = s.db.lock().unwrap().update_history(&h);
+            let _ = db.update_history(&h);
         }
         e
     };
@@ -435,7 +459,8 @@ fn process_dictation(
         has_key: eng.key.is_some(),
     };
     let outcome = if mode == Mode::Command {
-        let selection = platform::read_selection();
+        wait_not_recording(s);
+        let selection = platform::read_selection(&fg.exe);
         run_command(samples, selection.as_deref(), &inp, &eng)
     } else {
         run_dictation(samples, &inp, &eng)
@@ -443,14 +468,16 @@ fn process_dictation(
     .map_err(fail)?;
     let Outcome::Done { raw, text, language, notice } = outcome else {
         // Nothing was said: leave no trace.
-        let db = s.db.lock().unwrap();
-        if let Ok(Some(h)) = db.get_history(history_id) {
-            if let Some(p) = &h.audio_path {
-                let _ = std::fs::remove_file(s.data_dir.join(p));
+        {
+            let db = s.db.lock().unwrap();
+            if let Ok(Some(h)) = db.get_history(history_id) {
+                if let Some(p) = &h.audio_path {
+                    let _ = std::fs::remove_file(s.data_dir.join(p));
+                }
+                let _ = db.delete_history(history_id);
             }
-            let _ = db.delete_history(history_id);
         }
-        s.bar(BarState::Idle);
+        s.message("No speech detected", false);
         return Ok(());
     };
     paste(s, &text, &fg.exe, notice);
@@ -473,7 +500,7 @@ fn process_transform(s: &Shared, id: i64) -> Result<(), String> {
     let t = s.db.lock().unwrap().list_transforms().map_err(|e| e.to_string())?.into_iter().find(|t| t.id == id);
     let t = t.ok_or("Transform not found")?;
     let fg = platform::foreground();
-    let Some(selection) = platform::read_selection() else { return Err("Select some text first".into()) };
+    let Some(selection) = platform::read_selection(&fg.exe) else { return Err("Select some text first".into()) };
     s.bar(BarState::Processing);
     let eng = engine(s, false)?;
     if eng.key.is_none() {

@@ -6,6 +6,8 @@ use std::path::Path;
 pub const SAMPLE_RATE: u32 = 16_000;
 const FRAME: usize = 480; // 30 ms
 const PAD: usize = 3_200; // 200 ms
+/// Less sound than this (150 ms) is a click or a bump, not speech.
+const MIN_VOICED_FRAMES: usize = 5;
 
 pub fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
@@ -55,6 +57,9 @@ pub fn trim_silence(samples: &[f32]) -> &[f32] {
     let loudest = sorted[sorted.len() - 1];
     // Capped at half the loudest frame so a recording with no silence at all is kept.
     let threshold = (3.0 * noise_floor).min(0.5 * loudest).max(0.01);
+    if levels.iter().filter(|l| **l > threshold).count() < MIN_VOICED_FRAMES {
+        return &[];
+    }
     let Some(first) = levels.iter().position(|l| *l > threshold) else { return &[] };
     let last = levels.iter().rposition(|l| *l > threshold).unwrap();
     let start = (first * FRAME).saturating_sub(PAD);
@@ -126,6 +131,14 @@ mod tests {
         let t = trim_silence(&s);
         // Speech is 8000 samples; 200 ms padding = 3200 samples each side (frame-aligned, ±1 frame).
         assert!(t.len() >= 8_000 + 2 * 3_200 - 480 && t.len() <= 8_000 + 2 * 3_200 + 960, "{}", t.len());
+    }
+
+    #[test]
+    fn single_click_is_not_speech() {
+        let mut s = vec![0.0f32; 16_000];
+        s.extend(sine(480, 0.5)); // one 30 ms click
+        s.extend(vec![0.0f32; 16_000]);
+        assert!(trim_silence(&s).is_empty());
     }
 
     #[test]

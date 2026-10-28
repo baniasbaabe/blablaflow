@@ -20,6 +20,8 @@ const BAR_WIDTH: f64 = 220.0;
 const BAR_HEIGHT: f64 = 48.0;
 const BAR_BOTTOM_GAP: f64 = 80.0;
 
+static PENDING_BAR_POS: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
+
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -90,11 +92,19 @@ fn main() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Moved(pos) if window.label() == "overlay" => {
-                let shared = window.state::<Arc<Shared>>();
-                let mut st = shared.settings();
-                if st.bar_position != Some((pos.x, pos.y)) {
-                    st.bar_position = Some((pos.x, pos.y));
-                    let _ = shared.save_settings(st);
+                // Moved fires continuously while dragging: remember the latest and save once it settles.
+                let first = PENDING_BAR_POS.lock().unwrap().replace((pos.x, pos.y)).is_none();
+                if first {
+                    let shared = window.state::<Arc<Shared>>().inner().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let Some(p) = PENDING_BAR_POS.lock().unwrap().take() else { return };
+                        let mut st = shared.settings();
+                        if st.bar_position != Some(p) {
+                            st.bar_position = Some(p);
+                            let _ = shared.save_settings(st);
+                        }
+                    });
                 }
             }
             _ => {}

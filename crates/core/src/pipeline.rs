@@ -6,7 +6,7 @@ use crate::db::{DictEntry, Snippet, Transform};
 use crate::groq::Message;
 use crate::prompt::{cleanup_messages, command_messages, transform_messages};
 use crate::settings::{CleanupLevel, Settings};
-use crate::text::{apply_corrections, expand_snippets, is_hallucination, sanitize_llm_output, strip_wrappers};
+use crate::text::{apply_corrections, expand_snippets, is_hallucination, sanitize_llm_output, strip_annotations, strip_wrappers};
 
 /// Shorter speech than this (after trimming) is treated as an accidental press.
 const MIN_SPEECH_SAMPLES: usize = 2_400; // 150 ms
@@ -40,6 +40,7 @@ fn transcribe(samples: &[f32], inp: &Inputs, eng: &impl Engine) -> Result<Option
     }
     let hint: Vec<&str> = inp.dict.iter().map(|d| d.replacement.as_deref().unwrap_or(&d.term)).collect();
     let (raw, lang) = eng.transcribe(speech, inp.settings.language.as_deref(), &hint.join(", "))?;
+    let raw = strip_annotations(&raw);
     Ok((!is_hallucination(&raw)).then_some((raw, lang)))
 }
 
@@ -81,7 +82,7 @@ pub fn run_command(samples: &[f32], selection: Option<&str>, inp: &Inputs, eng: 
     if !inp.has_key {
         return Err("Command Mode needs a Groq API key".into());
     }
-    let text = strip_wrappers(&eng.chat(command_messages(&raw, selection, inp.ctx))?);
+    let text = strip_wrappers(&raw, &eng.chat(command_messages(&raw, selection, inp.ctx))?);
     if text.is_empty() {
         return Err("Empty answer from Groq".into());
     }
@@ -89,7 +90,7 @@ pub fn run_command(samples: &[f32], selection: Option<&str>, inp: &Inputs, eng: 
 }
 
 pub fn run_transform(text: &str, t: &Transform, eng: &impl Engine) -> Result<String, String> {
-    let out = strip_wrappers(&eng.chat(transform_messages(t, text))?);
+    let out = strip_wrappers(text, &eng.chat(transform_messages(t, text))?);
     if out.is_empty() { Err("Empty answer from Groq".into()) } else { Ok(out) }
 }
 

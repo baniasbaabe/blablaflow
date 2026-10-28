@@ -56,7 +56,18 @@ pub fn word_count(text: &str) -> i64 {
     text.split_whitespace().count() as i64
 }
 
+/// Removes Whisper's sound annotations such as "[Music]", "(coughs)" or "*laughs*".
+pub fn strip_annotations(text: &str) -> String {
+    static ANNOTATION: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*").unwrap());
+    static SPACE_BEFORE_PUNCT: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"\s+([.,!?;:])").unwrap());
+    let s = ANNOTATION.replace_all(text, " ");
+    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    SPACE_BEFORE_PUNCT.replace_all(&s, "$1").into_owned()
+}
+
 pub fn is_hallucination(text: &str) -> bool {
+    let text = strip_annotations(text);
     if !text.chars().any(char::is_alphanumeric) {
         return true;
     }
@@ -64,11 +75,28 @@ pub fn is_hallucination(text: &str) -> bool {
     HALLUCINATIONS.contains(&t.as_str())
 }
 
+fn first_word(s: &str) -> String {
+    s.split(|c: char| !c.is_alphanumeric() && c != '\'').find(|w| !w.is_empty()).unwrap_or("").to_lowercase()
+}
+
+const QUESTION_WORDS: &[&str] = &[
+    "what", "what's", "whats", "who", "who's", "whom", "whose", "where", "where's", "when", "why", "how", "how's", "which",
+    "wie", "was", "wer", "wen", "wem", "wo", "woher", "wohin", "wann", "warum", "wieso", "weshalb", "welche", "welcher", "welches",
+];
+
+fn is_question(s: &str) -> bool {
+    s.trim_end().ends_with('?') || QUESTION_WORDS.contains(&first_word(s).as_str())
+}
+
 /// Remove a chatty preamble, code fences and surrounding quotes an LLM sometimes adds.
-pub fn strip_wrappers(out: &str) -> String {
+/// `source` is what the model was given; a preamble that `source` itself starts with is kept.
+pub fn strip_wrappers(source: &str, out: &str) -> String {
     static PREAMBLE: std::sync::LazyLock<Regex> =
         std::sync::LazyLock::new(|| Regex::new(r"(?i)^\s*(here('s| is)|sure|okay)[^\n]*:\s*\n").unwrap());
-    let mut s = PREAMBLE.replace(out, "").trim().to_string();
+    let mut s = out.trim().to_string();
+    if PREAMBLE.find(&s).is_some() && first_word(&s) != first_word(source) {
+        s = PREAMBLE.replace(&s, "").trim().to_string();
+    }
     if let Some(inner) = s.strip_prefix("```").and_then(|r| r.strip_suffix("```")) {
         // Drop an optional language tag on the opening fence line.
         s = inner.split_once('\n').map_or(inner, |(_, body)| body).trim().to_string();
@@ -82,11 +110,12 @@ pub fn strip_wrappers(out: &str) -> String {
     s
 }
 
-/// `strip_wrappers`, then fall back to `raw` on empty or runaway output (the model answered instead of cleaning).
+/// `strip_wrappers`, then fall back to `raw` when the model clearly answered instead of cleaning:
+/// empty or runaway output, or a dictated question that no longer is one.
 pub fn sanitize_llm_output(raw: &str, out: &str) -> String {
-    let s = strip_wrappers(out);
+    let s = strip_wrappers(raw, out);
     let n = raw.chars().count();
-    if s.is_empty() || s.chars().count() > (3 * n).max(n + 200) {
+    if s.is_empty() || s.chars().count() > (3 * n).max(n + 200) || (is_question(raw) && !s.contains('?')) {
         return raw.to_string();
     }
     s
@@ -167,6 +196,32 @@ mod tests {
         assert_eq!(sanitize_llm_output("hi", "```\nHi.\n```"), "Hi.");
         assert_eq!(sanitize_llm_output("hi", "\"Hi.\""), "Hi.");
         assert_eq!(sanitize_llm_output("hi", "  Hi.  "), "Hi.");
+    }
+
+    #[test]
+    fn annotations_are_hallucinations() {
+        for t in ["[BLANK_AUDIO]", "[Music]", "(keyboard clicking)", "*laughs*", " [ Silence ] "] {
+            assert!(is_hallucination(t), "{t:?}");
+        }
+        assert_eq!(strip_annotations("Hello [Music] there (coughs)."), "Hello there.");
+    }
+
+    #[test]
+    fn answered_question_falls_back_to_raw() {
+        let raw = "what's the capital of france";
+        assert_eq!(sanitize_llm_output(raw, "The capital of France is Paris."), raw);
+        assert_eq!(sanitize_llm_output(raw, "What's the capital of France?"), "What's the capital of France?");
+        assert_eq!(sanitize_llm_output("wie spät ist es", "Es ist 12 Uhr."), "wie spät ist es");
+        assert_eq!(sanitize_llm_output("is it done?", "Yes."), "is it done?");
+        assert_eq!(sanitize_llm_output("so um this works", "So this works."), "So this works.");
+    }
+
+    #[test]
+    fn dictated_preamble_is_kept() {
+        let raw = "here is my address new line main st 1";
+        assert_eq!(sanitize_llm_output(raw, "Here is my address:\nMain St 1"), "Here is my address:\nMain St 1");
+        assert_eq!(strip_wrappers("okay so: list", "Okay so:\nlist"), "Okay so:\nlist");
+        assert_eq!(strip_wrappers("fix this", "Sure, here it is:\nFixed."), "Fixed.");
     }
 
     #[test]
