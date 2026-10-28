@@ -161,11 +161,27 @@ impl Shared {
         Ok(stt)
     }
 
-    /// Loads the model in the background so the first dictation is fast.
+    /// Loads the model in the background and runs it once, so the first dictation is fast:
+    /// the first GPU run prepares its shaders, which can take several seconds.
     pub fn preload(self: &Arc<Self>) {
         let me = self.clone();
         std::thread::spawn(move || {
-            let _ = me.stt();
+            let st = me.settings();
+            if !me.models_dir().join(&st.model).exists() {
+                return;
+            }
+            let gpu = st.use_gpu && !crate::stt::list_gpus().is_empty();
+            if st.use_gpu && !gpu {
+                me.message("No GPU found – using the CPU, dictation will be slower", false);
+            } else if gpu {
+                me.message("Warming up GPU…", false);
+            }
+            let warm = me.stt().and_then(|stt| stt.transcribe(&[0.0; 16_000], Some("en"), "").map_err(|e| e.to_string()));
+            match warm {
+                Err(e) => me.message(e, true),
+                Ok(_) if gpu => me.bar(BarState::Idle),
+                Ok(_) => {}
+            }
         });
     }
 }

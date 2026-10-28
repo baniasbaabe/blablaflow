@@ -142,13 +142,19 @@ export function HotkeyInput({ value, action, onChange }: { value: string | null;
       keys.add(`Mouse${b}`);
       finish();
     };
+    // Never leave hotkeys paused: give up if focus leaves (e.g. Win opened the Start menu) or after 10 s.
+    const giveUp = () => setRecording(false);
+    const timer = setTimeout(giveUp, 10_000);
     window.addEventListener("keydown", down, true);
     window.addEventListener("keyup", up, true);
     window.addEventListener("mousedown", mouse, true);
+    window.addEventListener("blur", giveUp);
     return () => {
+      clearTimeout(timer);
       window.removeEventListener("keydown", down, true);
       window.removeEventListener("keyup", up, true);
       window.removeEventListener("mousedown", mouse, true);
+      window.removeEventListener("blur", giveUp);
       api.setPaused(false);
     };
   }, [recording]);

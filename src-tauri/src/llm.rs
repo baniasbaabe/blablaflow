@@ -7,9 +7,10 @@ const SERVICE: &str = "blablaflow";
 const USER: &str = "groq";
 const TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(2);
-/// Tried in order when the user hasn't picked a model; the first one Groq still serves wins.
+/// Tried in order when the user hasn't picked a model: the first id containing an entry wins.
+/// Qwen first: it can skip reasoning entirely, so it's the fastest good cleanup model on Groq.
 /// shortcut: fixed preference list; revisit when Groq's lineup changes.
-const PREFERRED_MODELS: &[&str] = &["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
+const PREFERRED_MODELS: &[&str] = &["qwen", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama"];
 
 fn entry() -> Option<keyring::Entry> {
     keyring::Entry::new(SERVICE, USER).ok()
@@ -89,7 +90,7 @@ pub async fn list_models(key: &str) -> Result<Vec<String>, String> {
 pub fn pick_default_model(available: &[String]) -> Option<String> {
     PREFERRED_MODELS
         .iter()
-        .find(|m| available.iter().any(|a| a == *m))
-        .map(|m| m.to_string())
-        .or_else(|| available.first().cloned())
+        .find_map(|p| available.iter().find(|a| a.contains(p)))
+        .or_else(|| available.first())
+        .cloned()
 }
