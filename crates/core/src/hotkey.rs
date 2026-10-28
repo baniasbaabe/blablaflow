@@ -219,6 +219,9 @@ enum State {
     Held { mode: Mode, keys: BTreeSet<Key>, since: u64 },
     /// Hands-free; ignores releases until the next full press of a talk binding.
     HandsFree,
+    /// Just stopped or cancelled by a key press: ignore the rest of that chord until all keys are up,
+    /// so finishing it (e.g. the Space of Ctrl+Win+Space) doesn't start a new recording.
+    WaitRelease,
 }
 
 pub struct HotkeyMatcher {
@@ -258,6 +261,14 @@ impl HotkeyMatcher {
 
     pub fn on_event(&mut self, key: Key, down: bool, now_ms: u64) -> MatchResult {
         if down {
+            if self.state == State::WaitRelease {
+                self.held.insert(key);
+                let swallow = !key.is_modifier() && self.matching().is_some();
+                if swallow {
+                    self.swallowed.insert(key);
+                }
+                return MatchResult { events: vec![], swallow };
+            }
             if !self.held.insert(key) {
                 // Auto-repeat of a held key.
                 return MatchResult { events: vec![], swallow: self.swallowed.contains(&key) };
@@ -273,6 +284,12 @@ impl HotkeyMatcher {
         } else {
             self.held.remove(&key);
             let swallow = self.swallowed.remove(&key);
+            if self.state == State::WaitRelease {
+                if self.held.is_empty() {
+                    self.state = State::Idle;
+                }
+                return MatchResult { events: vec![], swallow };
+            }
             MatchResult { events: self.on_up(key, now_ms), swallow }
         }
     }
@@ -305,7 +322,7 @@ impl HotkeyMatcher {
                 vec![Fire(a)]
             }
             (_, Some(Action::Cancel)) => {
-                self.state = State::Idle;
+                self.state = State::WaitRelease;
                 vec![Cancel]
             }
             // The push-to-talk chord grew into a longer binding: restart in that mode.
@@ -318,12 +335,12 @@ impl HotkeyMatcher {
                 vec![Cancel, Start(Mode::Command)]
             }
             (State::HandsFree, Some(Action::PushToTalk | Action::HandsFree)) => {
-                self.state = State::Idle;
+                self.state = State::WaitRelease;
                 vec![Stop]
             }
             // Another shortcut is being typed over a hold-to-talk chord.
             (State::Held { .. }, _) => {
-                self.state = State::Idle;
+                self.state = State::WaitRelease;
                 vec![Cancel]
             }
             _ => vec![],
@@ -616,5 +633,47 @@ mod review_tests {
         }
         assert_eq!(Mouse(3).to_vk(), Some(0x04));
         assert_eq!(Mouse(4).to_vk(), Some(0x05));
+    }
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+    use Key::*;
+
+    fn m() -> HotkeyMatcher {
+        HotkeyMatcher::new(
+            vec![
+                (Hotkey::parse("Ctrl+Win").unwrap(), Action::PushToTalk),
+                (Hotkey::parse("Ctrl+Win+Space").unwrap(), Action::HandsFree),
+            ],
+            500,
+        )
+    }
+
+    fn run(m: &mut HotkeyMatcher, evs: &[(Key, bool, u64)]) -> Vec<Trigger> {
+        evs.iter().flat_map(|&(k, d, t)| m.on_event(k, d, t).events).collect()
+    }
+
+    #[test]
+    fn hands_free_stop_with_same_chord_does_not_restart() {
+        let mut m = m();
+        run(&mut m, &[(Ctrl, true, 0), (Win, true, 10), (Space, true, 20), (Space, false, 80), (Win, false, 90), (Ctrl, false, 100)]);
+        let t = run(&mut m, &[(Ctrl, true, 5000), (Win, true, 5010), (Space, true, 5020), (Space, false, 5080), (Win, false, 5090), (Ctrl, false, 5100)]);
+        assert_eq!(t, vec![Trigger::Stop]);
+        // After everything is released, the next press starts normally.
+        let t = run(&mut m, &[(Ctrl, true, 9000), (Win, true, 9010)]);
+        assert_eq!(t, vec![Trigger::Start(Mode::PushToTalk)]);
+    }
+
+    #[test]
+    fn stopping_swallows_the_rest_of_the_chord() {
+        let mut m = m();
+        run(&mut m, &[(Ctrl, true, 0), (Win, true, 10), (Space, true, 20), (Space, false, 80), (Win, false, 90), (Ctrl, false, 100)]);
+        run(&mut m, &[(Ctrl, true, 5000), (Win, true, 5010)]);
+        let r = m.on_event(Space, true, 5020);
+        assert!(r.events.is_empty());
+        assert!(r.swallow, "the Space that finishes the stop chord must not type a space");
+        assert!(m.on_event(Space, false, 5030).swallow);
     }
 }
