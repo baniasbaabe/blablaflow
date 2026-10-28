@@ -27,8 +27,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
-      - uses: humbletim/install-vulkan-sdk@v1.2
-        with: { version: latest, cache: true }
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci && npm run build
@@ -37,11 +35,17 @@ jobs:
         run: |
           curl -sSLo ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
           curl -sSLo jfk.wav https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
-      - run: cargo clippy -p blablaflow --features vulkan --all-targets -- -D warnings
-      - run: cargo test -p blablaflow --features vulkan -- --include-ignored
-      - if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+      - run: cargo clippy -p blablaflow --all-targets -- -D warnings
+      - run: cargo test -p blablaflow -- --include-ignored
+      # The GPU (Vulkan) build is slow; only main gets it, together with the installer.
+      - if: github.ref == 'refs/heads/main'
+        uses: jakoch/install-vulkan-sdk-action@v1.7.0
+        with: { vulkan_version: latest, install_runtime: true, cache: true, stripdown: true }
+      - if: github.ref == 'refs/heads/main'
+        run: cargo clippy -p blablaflow --features vulkan -- -D warnings
+      - if: github.ref == 'refs/heads/main'
         run: npx tauri build --features vulkan
-      - if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+      - if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v5
         with:
           name: blablaflow-setup
