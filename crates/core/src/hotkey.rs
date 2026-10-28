@@ -22,6 +22,22 @@ pub enum Key {
 }
 
 impl Key {
+    /// Maps a Windows virtual-key code (left/right variants merged).
+    pub fn from_vk(vk: u16) -> Key {
+        match vk {
+            0x10 | 0xA0 | 0xA1 => Key::Shift,
+            0x11 | 0xA2 | 0xA3 => Key::Ctrl,
+            0x12 | 0xA4 | 0xA5 => Key::Alt,
+            0x5B | 0x5C => Key::Win,
+            0x20 => Key::Space,
+            0x1B => Key::Escape,
+            0x14 => Key::CapsLock,
+            0x30..=0x39 | 0x41..=0x5A => Key::Char(vk as u8 as char),
+            0x70..=0x87 => Key::F((vk - 0x6F) as u8),
+            _ => Key::Other(vk),
+        }
+    }
+
     pub fn is_modifier(self) -> bool {
         matches!(self, Key::Ctrl | Key::Shift | Key::Win | Key::Alt)
     }
@@ -473,5 +489,35 @@ mod tests {
         let mut m = matcher();
         assert!(!m.on_event(Ctrl, true, 0).swallow);
         assert!(!m.on_event(Win, true, 10).swallow);
+    }
+}
+
+#[cfg(test)]
+mod vk_tests {
+    use super::*;
+
+    #[test]
+    fn vk_to_key_mapping() {
+        assert_eq!(Key::from_vk(0x5B), Key::Win); // VK_LWIN
+        assert_eq!(Key::from_vk(0x5C), Key::Win); // VK_RWIN
+        assert_eq!(Key::from_vk(0xA2), Key::Ctrl); // VK_LCONTROL
+        assert_eq!(Key::from_vk(0x11), Key::Ctrl); // VK_CONTROL
+        assert_eq!(Key::from_vk(0xA5), Key::Alt); // VK_RMENU
+        assert_eq!(Key::from_vk(0xA0), Key::Shift);
+        assert_eq!(Key::from_vk(0x20), Key::Space);
+        assert_eq!(Key::from_vk(0x1B), Key::Escape);
+        assert_eq!(Key::from_vk(0x14), Key::CapsLock);
+        assert_eq!(Key::from_vk(0x41), Key::Char('A'));
+        assert_eq!(Key::from_vk(0x31), Key::Char('1'));
+        assert_eq!(Key::from_vk(0x74), Key::F(5));
+        assert_eq!(Key::from_vk(0x2E), Key::Other(0x2E));
+    }
+
+    #[test]
+    fn vk_keys_match_parsed_hotkeys() {
+        let h = Hotkey::parse("Win+Alt+1").unwrap();
+        let mut v = vec![Key::from_vk(0x5B), Key::from_vk(0xA4), Key::from_vk(0x31)];
+        v.sort();
+        assert_eq!(h.0, v);
     }
 }

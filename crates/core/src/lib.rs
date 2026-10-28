@@ -7,3 +7,6 @@ pub mod text;
 pub mod hotkey;
 pub mod groq;
 pub mod prompt;
+pub mod audio;
+pub mod insert;
+pub mod pipeline;

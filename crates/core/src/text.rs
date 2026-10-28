@@ -64,8 +64,8 @@ pub fn is_hallucination(text: &str) -> bool {
     HALLUCINATIONS.contains(&t.as_str())
 }
 
-/// Strip wrappers an LLM sometimes adds; fall back to `raw` on empty or runaway output.
-pub fn sanitize_llm_output(raw: &str, out: &str) -> String {
+/// Remove a chatty preamble, code fences and surrounding quotes an LLM sometimes adds.
+pub fn strip_wrappers(out: &str) -> String {
     static PREAMBLE: std::sync::LazyLock<Regex> =
         std::sync::LazyLock::new(|| Regex::new(r"(?i)^\s*(here('s| is)|sure|okay)[^\n]*:\s*\n").unwrap());
     let mut s = PREAMBLE.replace(out, "").trim().to_string();
@@ -79,6 +79,12 @@ pub fn sanitize_llm_output(raw: &str, out: &str) -> String {
             s = s[q.len_utf8()..s.len() - close.len_utf8()].trim().to_string();
         }
     }
+    s
+}
+
+/// `strip_wrappers`, then fall back to `raw` on empty or runaway output (the model answered instead of cleaning).
+pub fn sanitize_llm_output(raw: &str, out: &str) -> String {
+    let s = strip_wrappers(out);
     let n = raw.chars().count();
     if s.is_empty() || s.chars().count() > (3 * n).max(n + 200) {
         return raw.to_string();
