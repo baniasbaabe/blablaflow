@@ -283,3 +283,12 @@ pub fn free_space(dir: &Path) -> Option<u64> {
     Some(free)
 }
 
+
+/// Shows a window without activating it, so the focused app keeps focus.
+pub fn show_no_activate(window: &tauri::WebviewWindow) {
+    if let Ok(h) = window.hwnd() {
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(HWND(h.0), windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE);
+        }
+    }
+}
