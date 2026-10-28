@@ -25,11 +25,22 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     pub temperature: f32,
     pub max_tokens: u32,
+    /// Reasoning models think before answering; for dictation cleanup that's pure latency.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<&'static str>,
 }
 
 impl ChatRequest {
     pub fn new(model: impl Into<String>, messages: Vec<Message>) -> Self {
-        Self { model: model.into(), messages, temperature: 0.2, max_tokens: 4096 }
+        let model = model.into();
+        let reasoning_effort = if model.starts_with("openai/gpt-oss") {
+            Some("low")
+        } else if model.contains("qwen3") {
+            Some("none")
+        } else {
+            None
+        };
+        Self { model, messages, temperature: 0.2, max_tokens: 4096, reasoning_effort }
     }
 }
 
@@ -79,6 +90,14 @@ mod tests {
         assert_eq!(v["messages"][1]["role"], "user");
         assert_eq!(v["max_tokens"], 4096);
         assert!((v["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reasoning_models_think_as_little_as_possible() {
+        let v = |m: &str| serde_json::to_value(ChatRequest::new(m, vec![])).unwrap();
+        assert_eq!(v("openai/gpt-oss-120b")["reasoning_effort"], "low");
+        assert_eq!(v("qwen/qwen3.8-27b")["reasoning_effort"], "none");
+        assert!(v("llama-3.1-8b-instant").get("reasoning_effort").is_none());
     }
 
     #[test]
